@@ -701,6 +701,8 @@ release_and_deploy() {
   declare desc="main function for releasing and deploying an app"
   source "$PLUGIN_AVAILABLE_PATH/config/functions"
 
+  acquire_app_release_lock "$APP" "exclusive"
+
   local APP="$1"; local IMAGE_TAG="$2"; local IMAGE=$(get_app_image_name "$APP" "$IMAGE_TAG")
   verify_app_name "$APP"
 
@@ -735,6 +737,8 @@ release_and_deploy() {
 
     echo
   fi
+  
+  release_app_release_lock "$APP"
 }
 
 dokku_receive() {
@@ -1156,4 +1160,37 @@ release_app_deploy_lock() {
   local APP_DEPLOY_LOCK_FILE="$DOKKU_ROOT/$APP/.deploy.lock"
 
   flock -u "$APP_DEPLOY_LOCK_FD" && rm -f "$APP_DEPLOY_LOCK_FILE" &> /dev/null
+}
+
+acquire_app_release_lock() {
+  declare desc="acquire advisory lock for use in release and deploy"
+  local APP="$1"; verify_app_name "$APP"
+  local LOCK_TYPE="${2:-waiting}"
+  local APP_RELEASE_LOCK_FD="201"
+  local APP_RELEASE_LOCK_FILE="$DOKKU_ROOT/$APP/.release.lock"
+  local LOCK_WAITING_MSG="$APP is currently being released. Waiting..."
+  local LOCK_FAILED_MSG="$APP is currently being released. Exiting..."
+  local SHOW_MSG=true
+
+  eval "exec $APP_RELEASE_LOCK_FD>$APP_RELEASE_LOCK_FILE"
+  if [[ "$LOCK_TYPE" == "waiting" ]]; then
+    while [[ $(flock -n "$APP_RELEASE_LOCK_FD" &>/dev/null ; echo $?) -ne 0 ]]; do
+      if [[ "$SHOW_MSG" == "true" ]]; then
+        echo "$LOCK_WAITING_MSG"
+        SHOW_MSG=false
+      fi
+      sleep 1
+    done
+  else
+    flock -n "$APP_RELEASE_LOCK_FD" &>/dev/null || dokku_log_fail "$LOCK_FAILED_MSG"
+  fi
+}
+
+release_app_release_lock() {
+  declare desc="release advisory lock used in release and deploy"
+  local APP="$1"; verify_app_name "$APP"
+  local APP_RELEASE_LOCK_FD="201"
+  local APP_RELEASE_LOCK_FILE="$DOKKU_ROOT/$APP/.release.lock"
+
+  flock -u "$APP_RELEASE_LOCK_FD" && rm -f "$APP_RELEASE_LOCK_FILE" &> /dev/null
 }
